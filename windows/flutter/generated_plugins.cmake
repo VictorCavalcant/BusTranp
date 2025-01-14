@@ -3,11 +3,13 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  battery_plus
   cloud_firestore
   firebase_auth
   firebase_core
   geolocator_windows
   rive_common
+  url_launcher_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

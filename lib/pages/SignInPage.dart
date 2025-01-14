@@ -6,7 +6,7 @@ import 'package:ubus/pages/HomePage.dart';
 import 'package:ubus/services/AuthService.dart';
 
 class SignInPage extends StatefulWidget {
-  const SignInPage({Key? key}) : super(key: key);
+  const SignInPage({super.key});
 
   @override
   State<SignInPage> createState() => _SignInPageState();
@@ -168,7 +168,7 @@ class _SignInPageState extends State<SignInPage> {
     );
   }
 
-  signIn() {
+  signIn() async {
     String email = _emailControllerSgIn.text;
     String password = _passwordControllerSgIn.text;
 
@@ -176,7 +176,7 @@ class _SignInPageState extends State<SignInPage> {
       setState(() {
         isLoading = true;
       });
-      authService
+      await authService
           .logUser(email: email, password: password)
           .then((String? error) {
         if (error != null) {
@@ -194,12 +194,14 @@ class _SignInPageState extends State<SignInPage> {
                   desc: error)
               .show();
         } else {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const DriverMapPage(),
-            ),
-          );
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const DriverMapPage(),
+              ),
+            );
+          }
         }
       });
     } else {

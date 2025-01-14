@@ -81,14 +81,7 @@ class StopProvider extends ChangeNotifier {
       stopsRegion = checkNearRegion(regions, stops, currentPosition);
     }
 
-    if (stopsRegion.isNotEmpty) {
-      print("Usuário se encontra na região: ${stopsRegion[0].region}");
-      print("Paradas da região: ");
-      print("");
-      for (var stop in stopsRegion) {
-        print("Nome da parada: ${stop.name}");
-      }
-    }
+
     notifyListeners();
   }
 

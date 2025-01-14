@@ -1,62 +1,110 @@
 import 'dart:async';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:location/location.dart' as loc;
+import 'package:ubus/models/Stop.dart';
 import 'package:ubus/pages/SignInPage.dart';
 import 'package:ubus/services/AuthService.dart';
 import 'package:ubus/services/DriverService.dart';
+import 'package:battery_plus/battery_plus.dart';
+import 'dart:ui' as ui;
+
+import 'package:ubus/stores/StopStore.dart';
 
 class DriverMapPage extends StatefulWidget {
-  const DriverMapPage({Key? key}) : super(key: key);
+  const DriverMapPage({super.key});
 
   @override
   State<DriverMapPage> createState() => _DriverMapPageState();
 }
 
-class _DriverMapPageState extends State<DriverMapPage>
-    with WidgetsBindingObserver {
-  final Completer<GoogleMapController> _mapController =
+class _DriverMapPageState extends State<DriverMapPage> {
+  Completer<GoogleMapController> _mapController =
       Completer<GoogleMapController>();
-  bool onBackGround = false;
-  StreamSubscription<Position>? positionStream;
+  loc.Location location = loc.Location();
+  List<Stop> stops = [];
+  bool trackinStop = false;
+  ValueNotifier<bool> trackinStop2 = ValueNotifier(false);
+  Stop stopDestination = const Stop('', LatLng(0.0, 0.0), '');
+  ValueNotifier<Stop> stopDestination2 =
+      ValueNotifier(const Stop('', LatLng(0.0, 0.0), ''));
+  int checkDistanceDestination = 0;
+  ValueNotifier<int> checkDistanceDestination2 = ValueNotifier(0);
+  final stopStore = StopStore();
+  final battery = Battery();
+  Timer checkBatteryTimer = Timer(Duration.zero, () {});
+  bool lowBattery = false;
   LatLng currentPosition = const LatLng(0.0, 0.0);
-  LatLng initialPosition = const LatLng(0.0, 0.0);
   DriverService driverService = DriverService();
-  final currentDriverName = FirebaseAuth.instance.currentUser!.displayName;
+  String? currentDriverName = FirebaseAuth.instance.currentUser!.displayName;
+  String currentDriverNameTemp = "";
   final _currentDriverId = FirebaseAuth.instance.currentUser!.uid;
   ValueNotifier<bool> active = ValueNotifier(false);
+  ValueNotifier<bool> isArrived = ValueNotifier(false);
+  bool checkIsArrived = false;
+  ValueNotifier<bool> checkIsArrived2 = ValueNotifier(false);
+  String currentDestination = '';
+  ValueNotifier<String> currentDestination2 = ValueNotifier('');
+  bool arriveStop = false;
+  String distanceStop = '';
+  ValueNotifier<String> distanceStop2 = ValueNotifier('');
+  String timeStop = '';
+  ValueNotifier<String> timeStop2 = ValueNotifier('');
+  Map<PolylineId, Polyline> polylines = {};
+  ValueNotifier<Map<PolylineId, Polyline>> polylines2 = ValueNotifier({});
 
-  getInitialLocation() async {
-    Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.bestForNavigation);
-    initialPosition = LatLng(position.latitude, position.longitude);
-  }
-
-  Future<void> _cameraToPosition(Position position) async {
+  Future<void> _cameraToPosition() async {
     final GoogleMapController controller = await _mapController.future;
-    controller.moveCamera(
+    await controller.moveCamera(
       CameraUpdate.newCameraPosition(
-        CameraPosition(
-            target: LatLng(position.latitude, position.longitude), zoom: 17),
+        CameraPosition(target: currentPosition, zoom: 17),
       ),
     );
   }
 
-  getCurrentLocation() {
-    const LocationSettings locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
+  BitmapDescriptor stopMarkerIcon = BitmapDescriptor.defaultMarker;
+
+  Future<Uint8List> getBytesFromAssets(String path, int width) async {
+    ByteData data = await rootBundle.load(path);
+    ui.Codec codec = await ui.instantiateImageCodec(data.buffer.asUint8List(),
+        targetWidth: width);
+    ui.FrameInfo fi = await codec.getNextFrame();
+    return (await fi.image.toByteData(format: ui.ImageByteFormat.png))!
+        .buffer
+        .asUint8List();
+  }
+
+  _customStopMarkerIcon() async {
+    final Uint8List customIcon =
+        await getBytesFromAssets("assets/Bus_marker.png", 120);
+    stopMarkerIcon = BitmapDescriptor.fromBytes(customIcon);
+  }
+
+  getCurrentLocation() async {
+    LocationPermission permission;
+
+    permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.always) {
+      location.enableBackgroundMode(enable: true);
+    }
+
+    location.changeSettings(
+      accuracy: loc.LocationAccuracy.navigation,
       distanceFilter: 8,
     );
 
-    positionStream =
-        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-      (Position? position) async {
-        currentPosition = LatLng(position!.latitude, position.longitude);
-        print("posição atual -----> $currentPosition");
-        await _cameraToPosition(position);
+    location.onLocationChanged.listen(
+      (loc.LocationData currentLocation) async {
+        currentPosition =
+            LatLng(currentLocation.latitude!, currentLocation.longitude!);
+        await _cameraToPosition();
         if (active.value) {
           await driverService.getCoords(_currentDriverId,
               currentPosition.latitude, currentPosition.longitude);
@@ -74,46 +122,103 @@ class _DriverMapPageState extends State<DriverMapPage>
     } else {
       await driverService.resetActive(_currentDriverId);
       await driverService.resetCoords(_currentDriverId);
+      await driverService.toggleIsArrived(_currentDriverId, false);
     }
+  }
+
+  toggleIsArrived() async {
+    isArrived.value = !isArrived.value;
+    if (isArrived.value) {
+      await driverService.toggleIsArrived(_currentDriverId, isArrived.value);
+    } else {
+      await driverService.resetIsArrived(_currentDriverId);
+    }
+  }
+
+  busArrived() async {
+    await driverService.toggleIsArrived(_currentDriverId, true);
+  }
+
+  busNotArrived() async {
+    await driverService.toggleIsArrived(_currentDriverId, false);
+  }
+
+  checkBatteryLevel() async {
+    checkBatteryTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (timer) async {
+        if (await battery.batteryLevel <= 40 && !lowBattery && mounted) {
+          location.changeSettings(
+            accuracy: loc.LocationAccuracy.powerSave,
+            distanceFilter: 8,
+          );
+          setState(
+            () {
+              lowBattery = true;
+            },
+          );
+        } else if (await battery.batteryLevel > 40 && lowBattery && mounted) {
+          location.changeSettings(
+            accuracy: loc.LocationAccuracy.navigation,
+            distanceFilter: 8,
+          );
+          setState(
+            () {
+              lowBattery = false;
+            },
+          );
+        }
+      },
+    );
+  }
+
+  getStops() async {
+    stopStore.getStops();
+  }
+
+  Future<void> getUserName() async {
+    currentDriverName = FirebaseAuth.instance.currentUser!.displayName;
+
+    String email = FirebaseAuth.instance.currentUser!.email!;
+
+    RegExp regExp = RegExp(r'\d+');
+
+    Match? match = regExp.firstMatch(email);
+
+    String numero = "";
+
+    if (match != null) {
+      numero = match.group(0)!; // O número encontrado
+    }
+
+    currentDriverNameTemp = "Van $numero";
   }
 
   @override
   void initState() {
-    WidgetsBinding.instance.addObserver(this);
-    Future.delayed(const Duration(seconds: 5), () async {
-      final GoogleMapController controller = await _mapController.future;
-      controller.moveCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: initialPosition, zoom: 17),
-        ),
-      );
-    });
-    getInitialLocation();
+    getUserName();
+    checkBatteryLevel();
     getCurrentLocation();
+    _cameraToPosition();
+    _customStopMarkerIcon();
     driverService.resetActive(_currentDriverId);
+    driverService.resetIsArrived(_currentDriverId);
     driverService.resetCoords(_currentDriverId);
     super.initState();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    positionStream!.cancel();
+    _mapController = Completer();
+    driverService.resetActive(_currentDriverId);
+    driverService.resetIsArrived(_currentDriverId);
+    driverService.resetCoords(_currentDriverId);
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) {
-      positionStream!.cancel;
-      getCurrentLocation();
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      key: GlobalKey(),
       appBar: AppBar(
         iconTheme: const IconThemeData(color: Colors.white),
         toolbarHeight: 45,
@@ -139,7 +244,9 @@ class _DriverMapPageState extends State<DriverMapPage>
                   color: Colors.white,
                 ),
               ),
-              title: Text(currentDriverName!),
+              title: Text(currentDriverName != null
+                  ? currentDriverName!
+                  : currentDriverNameTemp),
             ),
             ListTile(
               leading: const Icon(Icons.logout),
@@ -154,6 +261,14 @@ class _DriverMapPageState extends State<DriverMapPage>
                 );
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.gps_fixed),
+              title: const Text('Habilitar localização em plano de fundo'),
+              onTap: () async {
+                await Geolocator.openLocationSettings();
+                await location.enableBackgroundMode(enable: true);
+              },
+            )
           ],
         ),
       ),
@@ -162,15 +277,13 @@ class _DriverMapPageState extends State<DriverMapPage>
           Expanded(
             child: GoogleMap(
               initialCameraPosition: CameraPosition(
-                target: initialPosition,
+                target: currentPosition,
                 zoom: 18,
               ),
               onMapCreated: ((GoogleMapController controller) {
                 if (!_mapController.isCompleted) {
-                  controller.animateCamera(CameraUpdate.newCameraPosition(
-                      CameraPosition(target: currentPosition, zoom: 18)));
                   _mapController.complete(controller);
-                } else {}
+                }
               }),
               myLocationEnabled: true,
               zoomControlsEnabled: false,

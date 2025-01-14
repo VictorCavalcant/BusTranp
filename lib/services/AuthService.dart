@@ -7,10 +7,28 @@ class AuthService {
   Future<String?> logUser(
       {required String email, required String password}) async {
     try {
+      RegExp regExp = RegExp(r'\d+');
+
+      // Encontrar o número na string
+      Match? match = regExp.firstMatch(email);
+
+      String numero = "";
+
+      if (match != null) {
+        numero = match.group(0)!; // O número encontrado
+      }
+
+      String username = "Van $numero";
+
       UserCredential userCredential = await _firebaseAuth
           .signInWithEmailAndPassword(email: email, password: password);
-      DriverService().addUser(userCredential.user!.uid);
-      userCredential.user!.reload();
+
+      await DriverService().addUser(userCredential.user!.uid, numero);
+
+      await userCredential.user!.reload();
+
+      await userCredential.user!.updateDisplayName(username);
+
       return null;
     } on FirebaseAuthException catch (e) {
       return e.message;
